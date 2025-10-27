@@ -19,6 +19,12 @@ WORKDIR /app
 COPY click-cartel-discord-bot/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Chromium for Playwright (installs OS deps too)
+RUN python -m playwright install --with-deps chromium
+
+# Optional: cache browsers path
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Copy app
 COPY click-cartel-discord-bot /app/click-cartel-discord-bot
 
