@@ -1,0 +1,15 @@
+.git
+.github
+.vscode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+.venv
+node_modules
+dist
+build
+.coverage
+pytest_cache

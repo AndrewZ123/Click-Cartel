@@ -1,0 +1,30 @@
+version: "3.9"
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: click-cartel-bot
+    environment:
+      # Provide at runtime (do NOT commit your token)
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      # Guild and channels
+      GUILD_ID: ${GUILD_ID}
+      PUBLIC_CHANNEL_ID: ${PUBLIC_CHANNEL_ID}
+      REVIEW_CHANNEL_ID: ${REVIEW_CHANNEL_ID}
+      MOD_CHANNEL_ID: ${MOD_CHANNEL_ID:-${REVIEW_CHANNEL_ID}}
+      # Scrape interval (seconds) or minutes fallback
+      SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-3600}
+      AUTO_SCRAPE_MINUTES: ${AUTO_SCRAPE_MINUTES:-60}
+      # Database file inside the mounted volume
+      DB_PATH: /data/clickcartel.db
+      # Presence
+      PRESENCE_TYPE: ${PRESENCE_TYPE:-watching}
+      PRESENCE_TEXT: ${PRESENCE_TEXT:-🕵️‍♂️ Your plug for paid research gigs.}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - bot-data:/data
+    restart: unless-stopped
+    # No ports required; the bot connects out to Discord
+volumes:
+  bot-data:
