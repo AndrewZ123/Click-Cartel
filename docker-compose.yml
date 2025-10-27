@@ -23,9 +23,12 @@ services:
       PRESENCE_TEXT: ${PRESENCE_TEXT:-🕵️‍♂️ Your plug for paid research gigs.}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ENABLE_PLAYWRIGHT_SCRAPERS: ${ENABLE_PLAYWRIGHT_SCRAPERS:-false}
+      # Add these so role checks work
+      ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
+      MEMBER_ROLE_ID: ${MEMBER_ROLE_ID}
+      BOT_STATUS_CHANNEL_ID: ${BOT_STATUS_CHANNEL_ID}
     volumes:
       - bot-data:/data
     restart: unless-stopped
-    # No ports required; the bot connects out to Discord
 volumes:
   bot-data:

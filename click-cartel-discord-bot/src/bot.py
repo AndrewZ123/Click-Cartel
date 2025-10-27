@@ -24,6 +24,7 @@ from src.services.scraper_manager import ScraperManager  # type: ignore
 
 INTENTS = discord.Intents.default()
 INTENTS.guilds = True
+INTENTS.members = True  # ensure roles are available in interactions
 
 class ClickCartelBot(commands.Bot):
     def __init__(self) -> None:
@@ -56,9 +57,10 @@ class ClickCartelBot(commands.Bot):
         guild_id = int(os.getenv("GUILD_ID", "0") or 0)
         try:
             if guild_id:
-                await self.tree.sync(guild=discord.Object(id=guild_id))
-            else:
-                await self.tree.sync()
+                gobj = discord.Object(id=guild_id)
+                await self.tree.sync(guild=gobj)  # instant in the target guild
+            # Also push global (may take up to 1 hour to appear)
+            await self.tree.sync()
             logger.info("Slash commands synced.")
         except Exception as e:
             logger.error("Command sync failed: %s", e, exc_info=True)
