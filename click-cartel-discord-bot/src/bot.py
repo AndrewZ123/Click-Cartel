@@ -1,30 +1,35 @@
 from __future__ import annotations
-import os, sys, asyncio, logging
+import os
+import sys
+import logging
 from pathlib import Path
-from typing import Any, Optional, Tuple, List
+from typing import Optional, List
 
 import discord
-from discord import app_commands
 from discord.ext import commands
+from dotenv import load_dotenv
 
 # Ensure project root (folder that contains the "src" package) is on sys.path
 proj_root = Path(__file__).resolve().parents[1]  # click-cartel-discord-bot/
+src_root = proj_root / "src"
 if str(proj_root) not in sys.path:
     sys.path.insert(0, str(proj_root))
 
-# Logging
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO),
-                    format="%(levelname)s:%(name)s: %(message)s")
-logger = logging.getLogger(__name__)
+from services.db import DB  # noqa: E402
+from services.scraper_manager import ScraperManager  # noqa: E402
 
-# Import after sys.path fix
-from src.services.db import DB  # type: ignore
-from src.services.scraper_manager import ScraperManager  # type: ignore
+load_dotenv()
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(levelname)s:%(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 INTENTS = discord.Intents.default()
 INTENTS.guilds = True
-INTENTS.members = True  # ensure roles are available in interactions
+INTENTS.members = True  # for role checks
 
 class ClickCartelBot(commands.Bot):
     def __init__(self) -> None:
@@ -33,19 +38,20 @@ class ClickCartelBot(commands.Bot):
         self.scraper_manager: Optional[ScraperManager] = None
 
     async def setup_hook(self) -> None:
-        # DB connect
-        self.db = DB(os.getenv("DB_PATH"))  # sqlite path resolved in DB class
+        # DB
+        db_path = os.getenv("DB_PATH", "/data/clickcartel.db")
+        self.db = DB(db_path)
         await self.db.connect()
 
-        # Scraper manager
+        # Scrapers
         self.scraper_manager = ScraperManager()
 
         # Load cogs
         for ext in (
-            "src.cogs.health",
-            "src.cogs.admin",
-            "src.cogs.saved_searches",
-            "src.cogs.rules",
+            "cogs.health",
+            "cogs.admin",
+            "cogs.saved_searches",
+            "cogs.rules",
         ):
             try:
                 await self.load_extension(ext)
@@ -53,47 +59,58 @@ class ClickCartelBot(commands.Bot):
             except Exception as e:
                 logger.error("Failed to load %s: %s", ext, e, exc_info=True)
 
-        # Sync app commands
-        guild_id = int(os.getenv("GUILD_ID", "0") or 0)
+        # Initial global sync
         try:
-            if guild_id:
-                gobj = discord.Object(id=guild_id)
-                await self.tree.sync(guild=gobj)  # instant in the target guild
-            # Also push global (may take up to 1 hour to appear)
-            await self.tree.sync()
-            logger.info("Slash commands synced.")
+            gs = await self.tree.sync()
+            logger.info("Global slash commands registered (%d).", len(gs))
         except Exception as e:
-            logger.error("Command sync failed: %s", e, exc_info=True)
+            logger.error("Global command sync failed: %s", e, exc_info=True)
+
+        # Also try the env guild (may fail if the bot isn’t in that guild)
+        gid = int(os.getenv("GUILD_ID", "0") or 0)
+        if gid:
+            try:
+                self.tree.copy_global_to(guild=discord.Object(id=gid))
+                gsynced = await self.tree.sync(guild=discord.Object(id=gid))
+                logger.info("Env guild slash commands synced (%d) to %s.", len(gsynced), gid)
+            except discord.Forbidden as e:
+                logger.error("Env guild sync forbidden for %s (likely not in guild or missing applications.commands): %s", gid, e)
+            except Exception as e:
+                logger.error("Env guild sync failed for %s: %s", gid, e)
+
+        # After ready, sync to all joined guilds
+        self.loop.create_task(self._sync_to_all_guilds_after_ready())
+
+    async def _sync_to_all_guilds_after_ready(self) -> None:
+        await self.wait_until_ready()
+        gids: List[int] = [g.id for g in self.guilds]
+        logger.info("Syncing commands to all joined guilds: %s", gids)
+        for g in self.guilds:
+            try:
+                self.tree.copy_global_to(guild=g)
+                synced = await self.tree.sync(guild=g)
+                logger.info("Synced %d commands to guild %s", len(synced), g.id)
+            except Exception as e:
+                logger.error("Guild %s sync failed: %s", g.id, e)
 
     async def on_ready(self) -> None:
-        text = os.getenv("PRESENCE_TEXT", "🕵️ Paid research gigs")
-        activity = discord.Game(name=text)
+        me = self.user
+        guilds = ", ".join(f"{g.name}({g.id})" for g in self.guilds) or "none"
+        logger.info("Logged in as %s (%s)", me, getattr(me, "id", "?"))
+        logger.info("Bot is currently in guilds: %s", guilds)
+        pres_text = os.getenv("PRESENCE_TEXT", "🕵️ Your plug for paid research gigs.")
         try:
-            await self.change_presence(status=discord.Status.online, activity=activity)
+            await self.change_presence(status=discord.Status.online, activity=discord.Activity(type=discord.ActivityType.watching, name=pres_text))
         except Exception:
             pass
-        logger.info("Logged in as %s (%s)", self.user, self.user and self.user.id)
 
-    async def perform_scrape(self, *, trigger: str, actor: Optional[int]) -> Tuple[int, int]:
-        """
-        Runs all scrapers and upserts into DB.
-        Returns (new_rows_inserted, pending_count_after)
-        """
-        assert self.scraper_manager is not None, "ScraperManager missing"
-        assert self.db is not None, "DB missing"
-        logger.info("perform_scrape: trigger=%s actor_id=%s", trigger, actor)
-        listings = await self.scraper_manager.run_all()
-        new_count, pending = await self.db.upsert_listings(listings)
-        logger.info("perform_scrape: new=%s pending=%s", new_count, pending)
-        return new_count, pending
-
-
-async def main() -> None:
-    token = os.getenv("DISCORD_TOKEN", "")
+def main() -> None:
+    token = os.getenv("DISCORD_TOKEN")
     if not token:
-        raise RuntimeError("DISCORD_TOKEN not set")
+        logger.error("DISCORD_TOKEN not set.")
+        raise SystemExit(1)
     bot = ClickCartelBot()
-    await bot.start(token)
+    bot.run(token)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

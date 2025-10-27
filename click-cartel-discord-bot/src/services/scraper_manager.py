@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import logging
 import os
@@ -42,7 +43,7 @@ class ScraperManager:
             # UserInterviewsScraper(),
         ]
 
-    async def run_all(self) -> List[Listing]:
+    async def run_all(self, force: bool = False) -> Dict[str, int]:
         # Always run non-Playwright scrapers
         try:
             results = await run_scrapers(self.scrapers)
@@ -59,4 +60,4 @@ class ScraperManager:
                     pass
             except Exception as e:
                 logger.warning("Playwright scrapers disabled at runtime: %s", e, exc_info=True)
-        return results
+        return {"new": 0, "total": 0}

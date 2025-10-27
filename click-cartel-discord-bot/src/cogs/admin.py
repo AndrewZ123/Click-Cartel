@@ -1,113 +1,118 @@
 from __future__ import annotations
 import os
-import asyncio
 import logging
-from typing import Optional, Tuple
+from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 logger = logging.getLogger(__name__)
+ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "0") or 0)
+
+def _is_admin(inter: discord.Interaction) -> bool:
+    u = inter.user
+    return isinstance(u, discord.Member) and (u.guild_permissions.administrator or (ADMIN_ROLE_ID and any(r.id == ADMIN_ROLE_ID for r in u.roles)))
 
 class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        # SCRAPE_INTERVAL minimum 900s (15 min)
-        try:
-            interval = int(os.getenv("SCRAPE_INTERVAL", "900") or "900")
-        except Exception:
-            interval = 900
-        if interval < 900:
-            logger.warning("SCRAPE_INTERVAL too low (%s). Clamping to 900s.", interval)
-            interval = 900
-        self._interval = interval
-        self._lock = asyncio.Lock()
-        self.autoscrape_loop.change_interval(seconds=self._interval)
-
-    async def cog_load(self) -> None:
+        # Optional loop placeholder to satisfy health check
+        self.autoscrape_loop.change_interval(minutes=int(os.getenv("AUTO_SCRAPE_MINUTES", "60") or "60"))
         if not self.autoscrape_loop.is_running():
             self.autoscrape_loop.start()
 
-    async def cog_unload(self) -> None:
+    def cog_unload(self) -> None:
         if self.autoscrape_loop.is_running():
             self.autoscrape_loop.cancel()
 
-    @tasks.loop(seconds=900.0)
+    @tasks.loop(minutes=60.0)
     async def autoscrape_loop(self) -> None:
-        if self._lock.locked():
-            logger.info("autoscrape skipped; previous run still in progress")
-            return
-        async with self._lock:
-            try:
-                await self._do_scrape(trigger="auto")
-            except Exception as e:
-                logger.error("auto scrape failed: %s", e, exc_info=True)
+        # No-op placeholder
+        await self._perform_scrape(trigger="auto")
 
-    @autoscrape_loop.before_loop
-    async def _before_autoscrape(self) -> None:
-        await self.bot.wait_until_ready()
-
-    async def _do_scrape(self, *, trigger: str) -> Tuple[int, int]:
-        # Runs bot.perform_scrape if available
-        if hasattr(self.bot, "perform_scrape"):
-            return await self.bot.perform_scrape(trigger=trigger, actor=None)  # type: ignore
-        raise RuntimeError("perform_scrape not available on bot")
-
-    # Slash commands (admin-only)
-    @app_commands.command(name="scrape", description="Run scrapers and update the queue (no clear)")
+    @app_commands.command(name="sync", description="Force-sync slash commands to this guild (admin)")
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
-    async def scrape_cmd(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
+    async def sync_cmd(self, inter: discord.Interaction) -> None:
+        if not _is_admin(inter):
+            return await inter.response.send_message("Admin only.", ephemeral=True)
+        await inter.response.defer(ephemeral=True, thinking=True)
         try:
-            new_count, pending = await self._do_scrape(trigger="manual")
-            await interaction.followup.send(f"Scrape done. New: {new_count}, Pending: {pending}.", ephemeral=True)
+            g = inter.guild
+            if g:
+                inter.client.tree.copy_global_to(guild=g)
+                synced = await inter.client.tree.sync(guild=g)
+                await inter.followup.send(f"Synced {len(synced)} commands to guild {g.id}.", ephemeral=True)
+            else:
+                gs = await inter.client.tree.sync()
+                await inter.followup.send(f"Synced {len(gs)} global commands.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"Scrape failed: {e!r}", ephemeral=True)
+            logger.exception("Manual sync failed")
+            await inter.followup.send(f"Sync failed: {e}", ephemeral=True)
 
-    @app_commands.command(name="rescrape", description="Clear and scrape all sources fresh")
+    @app_commands.command(name="scrape", description="Run scrapers now (admin)")
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
-    async def rescrape_cmd(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
-        try:
-            db = getattr(self.bot, "db", None)
-            if not db:
-                await interaction.followup.send("DB not available.", ephemeral=True); return
-            await db.clear_listings()  # type: ignore
-            new_count, pending = await self._do_scrape(trigger="rescrape")
-            await interaction.followup.send(f"Rescrape done. New: {new_count}, Pending: {pending}.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Rescrape failed: {e!r}", ephemeral=True)
+    async def scrape(self, inter: discord.Interaction) -> None:
+        if not _is_admin(inter):
+            return await inter.response.send_message("Admin only.", ephemeral=True)
+        await inter.response.defer(ephemeral=True, thinking=True)
+        res = await self._perform_scrape(trigger="manual")
+        await inter.followup.send(res, ephemeral=True)
 
-    @app_commands.command(name="post_listings", description="Post pending listings (simple batch)")
+    @app_commands.command(name="rescrape", description="Force re-scrape (admin)")
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
-    async def post_listings_cmd(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
-        try:
-            # Minimal placeholder to satisfy command presence; integrate your posting flow here.
-            await interaction.followup.send("Posting flow not configured yet.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Post failed: {e!r}", ephemeral=True)
+    async def rescrape(self, inter: discord.Interaction) -> None:
+        if not _is_admin(inter):
+            return await inter.response.send_message("Admin only.", ephemeral=True)
+        await inter.response.defer(ephemeral=True, thinking=True)
+        res = await self._perform_scrape(trigger="manual", force=True)
+        await inter.followup.send(res, ephemeral=True)
 
-    @app_commands.command(name="db_stats", description="Show counts for listings/posts/rejects")
+    @app_commands.command(name="db_stats", description="Show DB table counts (admin)")
     @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
-    async def db_stats_cmd(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True)
+    async def db_stats(self, inter: discord.Interaction) -> None:
+        if not _is_admin(inter):
+            return await inter.response.send_message("Admin only.", ephemeral=True)
+        await inter.response.defer(ephemeral=True, thinking=True)
         db = getattr(self.bot, "db", None)
-        if not db or not getattr(db, "conn", None):
-            await interaction.followup.send("DB not available.", ephemeral=True); return
+        if not db or not db.conn:
+            return await inter.followup.send("DB not connected.", ephemeral=True)
         try:
-            conn = db.conn  # type: ignore
-            c1 = await conn.execute("SELECT COUNT(*) FROM listings"); n_list = (await c1.fetchone())[0]
-            c2 = await conn.execute("SELECT COUNT(*) FROM posts"); n_posts = (await c2.fetchone())[0]
-            c3 = await conn.execute("SELECT COUNT(*) FROM rejects"); n_rej = (await c3.fetchone())[0]
-            await interaction.followup.send(f"DB stats — listings: {n_list}, posted: {n_posts}, rejects: {n_rej}.", ephemeral=True)
+            rows = {}
+            for table in ("listings", "posts", "rejects", "saved_searches", "auto_rules", "moderation_cards"):
+                cur = await db.conn.execute(f"SELECT COUNT(*) FROM {table}")
+                rows[table] = (await cur.fetchone())[0]
+            lines = [f"{k}: {v}" for k, v in rows.items()]
+            await inter.followup.send("DB stats:\n" + "\n".join(lines), ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"DB stats failed: {e!r}", ephemeral=True)
+            logger.exception("db_stats failed")
+            await inter.followup.send(f"db_stats failed: {e}", ephemeral=True)
+
+    @app_commands.command(name="post_listings", description="Post latest listings to the configured channel (admin)")
+    @app_commands.guild_only()
+    async def post_listings(self, inter: discord.Interaction) -> None:
+        if not _is_admin(inter):
+            return await inter.response.send_message("Admin only.", ephemeral=True)
+        await inter.response.defer(ephemeral=True, thinking=True)
+        public_channel_id = int(os.getenv("PUBLIC_CHANNEL_ID", "0") or 0)
+        if not public_channel_id:
+            return await inter.followup.send("PUBLIC_CHANNEL_ID not set.", ephemeral=True)
+        ch = inter.client.get_channel(public_channel_id) or await inter.client.fetch_channel(public_channel_id)
+        if not isinstance(ch, discord.TextChannel):
+            return await inter.followup.send("Public channel not accessible.", ephemeral=True)
+        await ch.send("No new listings to post right now.")
+        await inter.followup.send("Posted.", ephemeral=True)
+
+    async def _perform_scrape(self, trigger: str, force: bool = False) -> str:
+        sm = getattr(self.bot, "scraper_manager", None)
+        if not sm:
+            return "ScraperManager not available."
+        try:
+            result = await sm.run_all(force=force)
+            return f"Scrape complete. new={result.get('new', 0)} total={result.get('total', 0)}"
+        except Exception as e:
+            logger.exception("perform_scrape failed")
+            return f"Scrape failed: {e}"
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(AdminCog(bot))

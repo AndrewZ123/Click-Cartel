@@ -3,7 +3,10 @@ import os
 import urllib.parse
 import re
 import aiosqlite
+import logging
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -135,14 +138,23 @@ class DB:
         self.conn: Optional[aiosqlite.Connection] = None
 
     async def connect(self) -> None:
-        if self.conn:
-            return
-        base = os.path.dirname(self.db_path)
-        if base:
-            os.makedirs(base, exist_ok=True)
         self.conn = await aiosqlite.connect(self.db_path)
-        self.conn.row_factory = aiosqlite.Row
-        await self.conn.executescript(SCHEMA)
+        await self.conn.execute("PRAGMA journal_mode=WAL;")
+        await self._ensure_schema()
+        logger.info("DB connected: %s", self.db_path)
+
+    async def _ensure_schema(self) -> None:
+        assert self.conn is not None
+        stmts = [
+            "CREATE TABLE IF NOT EXISTS listings (id INTEGER PRIMARY KEY, source TEXT, title TEXT, url TEXT, pay TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY, listing_id INTEGER, channel_id INTEGER, message_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS rejects (id INTEGER PRIMARY KEY, listing_id INTEGER, reason TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS saved_searches (id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER, user_id INTEGER, query TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS auto_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER, name TEXT, query TEXT, enabled INTEGER DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS moderation_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER, listing_id INTEGER, status TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        ]
+        for s in stmts:
+            await self.conn.execute(s)
         await self.conn.commit()
 
     async def close(self) -> None:

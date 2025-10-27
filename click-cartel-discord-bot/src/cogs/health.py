@@ -78,6 +78,11 @@ class HealthCog(commands.Cog):
         self._health_loop.change_interval(seconds=10800)
         self._log_handler: DiscordErrorReporter | None = None
 
+    @app_commands.command(name="ping", description="Check bot latency")
+    @app_commands.guild_only()
+    async def ping(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(f"Pong! {round(self.bot.latency * 1000)} ms", ephemeral=True)
+
     async def cog_load(self) -> None:
         # Attach reporter once (target all logs; change "logging.getLogger('src')" to limit scope)
         if not self._log_handler:
@@ -170,7 +175,13 @@ class HealthCog(commands.Cog):
 
         # 4) Slash commands (global + guild)
         try:
-            expected = {"scrape", "rescrape", "post_listings", "db_stats", "save_search", "my_searches", "delete_search", "rules_add", "rules_list", "rules_toggle", "rules_delete", "bot_status"}
+            expected = {
+                "ping",
+                "bot_status",
+                "scrape", "rescrape", "post_listings", "db_stats", "sync",
+                "save_search", "my_searches", "delete_search",
+                "rules_add", "rules_list", "rules_toggle", "rules_delete",
+            }
             present: set[str] = set()
             try:
                 present |= {c.name for c in self.bot.tree.get_commands()}
