@@ -22,3 +22,9 @@ dist/
 # Env/Secrets
 .env
 *.env
+
+# SQLite databases
+*.db
+*.db-*
+*.sqlite
+*.sqlite3

@@ -1,5 +1,7 @@
 from __future__ import annotations
 import os
+import urllib.parse
+import re
 import aiosqlite
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -80,6 +82,38 @@ CREATE TABLE IF NOT EXISTS moderation_cards (
 );
 """
 
+def _normalize_link(url: str) -> str:
+    if not url:
+        return url
+    try:
+        u = urllib.parse.urlsplit(url.strip())
+        # lowercase scheme+host, drop fragment, drop tracking query params
+        scheme = (u.scheme or "https").lower()
+        netloc = (u.netloc or "").lower()
+        path = u.path or "/"
+        # Keep only “stable” params (site-specific tweak: FocusGroups.org links are stable by path)
+        keep = []
+        if u.query:
+            qs = urllib.parse.parse_qsl(u.query, keep_blank_values=False)
+            for k, v in qs:
+                # Keep only essential IDs; drop utm, gclid, fbclid, etc.
+                if re.match(r"^(utm_|gclid|fbclid|mc_eid|mc_cid)$", k, re.I):
+                    continue
+                # FocusGroups.org rarely needs query params; drop all by default
+                continue
+                # keep.append((k, v))
+        query = urllib.parse.urlencode(keep) if keep else ""
+        # Normalize trailing slash
+        if not path.endswith("/"):
+            path = path
+        normalized = urllib.parse.urlunsplit((scheme, netloc, path, query, ""))  # no fragment
+        # Remove redundant trailing slash except for root
+        if normalized.endswith("/") and path != "/":
+            normalized = normalized[:-1]
+        return normalized
+    except Exception:
+        return url.strip()
+        
 def _get_val(obj: Any, key: str) -> Any:
     # Supports dict-like and attribute-like objects
     if obj is None:
@@ -126,7 +160,8 @@ class DB:
         new_count = 0
         for it in listings:
             site = (_get_val(it, "site") or "").strip()
-            link = (_get_val(it, "link") or "").strip()
+            link_raw = (_get_val(it, "link") or "").strip()
+            link = _normalize_link(link_raw)
             if not site or not link:
                 continue
             cur = await self.conn.execute("SELECT id FROM listings WHERE site=? AND link=?", (site, link))
