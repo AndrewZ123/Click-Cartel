@@ -22,6 +22,7 @@ services:
       PRESENCE_TYPE: ${PRESENCE_TYPE:-watching}
       PRESENCE_TEXT: ${PRESENCE_TEXT:-🕵️‍♂️ Your plug for paid research gigs.}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENABLE_PLAYWRIGHT_SCRAPERS: ${ENABLE_PLAYWRIGHT_SCRAPERS:-false}
     volumes:
       - bot-data:/data
     restart: unless-stopped
