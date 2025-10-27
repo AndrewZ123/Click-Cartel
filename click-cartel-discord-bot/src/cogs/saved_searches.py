@@ -1,9 +1,6 @@
 from __future__ import annotations
-import os
-import logging
+import os, logging, discord
 from typing import Optional
-
-import discord
 from discord import app_commands
 from discord.ext import commands
 
@@ -29,15 +26,12 @@ class SavedSearchCog(commands.Cog):
         db = getattr(self.bot, "db", None)
         try:
             if db and db.conn:
-                await db.conn.execute(
-                    "INSERT INTO saved_searches (guild_id, user_id, query) VALUES (?, ?, ?)",
-                    (inter.guild_id, inter.user.id, query),
-                )
+                await db.conn.execute("INSERT INTO saved_searches (guild_id, user_id, query) VALUES (?, ?, ?)", (inter.guild_id, inter.user.id, query))
                 await db.conn.commit()
                 return await inter.followup.send("Saved.", ephemeral=True)
-        except Exception as e:
-            logger.exception("save_search failed: %s", e)
-        return await inter.followup.send("Saved (memory).", ephemeral=True)
+        except Exception:
+            logger.exception("save_search failed")
+        await inter.followup.send("Saved (memory).", ephemeral=True)
 
     @app_commands.command(name="my_searches", description="List your saved searches")
     @app_commands.guild_only()
@@ -47,16 +41,12 @@ class SavedSearchCog(commands.Cog):
         await inter.response.defer(ephemeral=True)
         db = getattr(self.bot, "db", None)
         if db and db.conn:
-            cur = await db.conn.execute(
-                "SELECT id, query FROM saved_searches WHERE guild_id=? AND user_id=? ORDER BY id",
-                (inter.guild_id, inter.user.id),
-            )
+            cur = await db.conn.execute("SELECT id, query FROM saved_searches WHERE guild_id=? AND user_id=? ORDER BY id", (inter.guild_id, inter.user.id))
             rows = await cur.fetchall()
             if not rows:
                 return await inter.followup.send("You have no saved searches.", ephemeral=True)
-            msg = "\n".join(f"{r[0]}: {r[1]}" for r in rows)
-            return await inter.followup.send(msg, ephemeral=True)
-        return await inter.followup.send("No saved searches.", ephemeral=True)
+            return await inter.followup.send("\n".join(f"{r[0]}: {r[1]}" for r in rows), ephemeral=True)
+        await inter.followup.send("No saved searches.", ephemeral=True)
 
     @app_commands.command(name="delete_search", description="Delete a saved search by ID")
     @app_commands.guild_only()
@@ -66,13 +56,10 @@ class SavedSearchCog(commands.Cog):
         await inter.response.defer(ephemeral=True)
         db = getattr(self.bot, "db", None)
         if db and db.conn:
-            await db.conn.execute(
-                "DELETE FROM saved_searches WHERE id=? AND guild_id=? AND user_id=?",
-                (search_id, inter.guild_id, inter.user.id),
-            )
+            await db.conn.execute("DELETE FROM saved_searches WHERE id=? AND guild_id=? AND user_id=?", (search_id, inter.guild_id, inter.user.id))
             await db.conn.commit()
             return await inter.followup.send("Deleted.", ephemeral=True)
-        return await inter.followup.send("Nothing to delete.", ephemeral=True)
+        await inter.followup.send("Nothing to delete.", ephemeral=True)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(SavedSearchCog(bot))

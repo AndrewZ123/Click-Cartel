@@ -1,30 +1,22 @@
 from __future__ import annotations
-import os
-import sys
-import logging
+import os, sys, logging
 from pathlib import Path
 from typing import Optional, List
-
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# Ensure project root (folder that contains the "src" package) is on sys.path
-proj_root = Path(__file__).resolve().parents[1]  # click-cartel-discord-bot/
-src_root = proj_root / "src"
-if str(proj_root) not in sys.path:
-    sys.path.insert(0, str(proj_root))
+# Put the "src" folder on sys.path
+src_root = Path(__file__).resolve().parent
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
 
 from services.db import DB  # noqa: E402
 from services.scraper_manager import ScraperManager  # noqa: E402
 
 load_dotenv()
-
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(levelname)s:%(name)s: %(message)s",
-)
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(levelname)s:%(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 INTENTS = discord.Intents.default()
@@ -47,34 +39,30 @@ class ClickCartelBot(commands.Bot):
         self.scraper_manager = ScraperManager()
 
         # Load cogs
-        for ext in (
-            "cogs.health",
-            "cogs.admin",
-            "cogs.saved_searches",
-            "cogs.rules",
-        ):
+        for ext in ("cogs.health", "cogs.admin", "cogs.saved_searches", "cogs.rules"):
             try:
                 await self.load_extension(ext)
                 logger.info("Loaded %s", ext)
             except Exception as e:
                 logger.error("Failed to load %s: %s", ext, e, exc_info=True)
 
-        # Initial global sync
+        # Register global commands (may take up to 1 hour to appear)
         try:
             gs = await self.tree.sync()
             logger.info("Global slash commands registered (%d).", len(gs))
         except Exception as e:
             logger.error("Global command sync failed: %s", e, exc_info=True)
 
-        # Also try the env guild (may fail if the bot isn’t in that guild)
+        # Try env guild
         gid = int(os.getenv("GUILD_ID", "0") or 0)
         if gid:
             try:
-                self.tree.copy_global_to(guild=discord.Object(id=gid))
-                gsynced = await self.tree.sync(guild=discord.Object(id=gid))
+                gobj = discord.Object(id=gid)
+                self.tree.copy_global_to(guild=gobj)
+                gsynced = await self.tree.sync(guild=gobj)
                 logger.info("Env guild slash commands synced (%d) to %s.", len(gsynced), gid)
             except discord.Forbidden as e:
-                logger.error("Env guild sync forbidden for %s (likely not in guild or missing applications.commands): %s", gid, e)
+                logger.error("Env guild sync forbidden for %s (invite with applications.commands): %s", gid, e)
             except Exception as e:
                 logger.error("Env guild sync failed for %s: %s", gid, e)
 
@@ -109,8 +97,7 @@ def main() -> None:
     if not token:
         logger.error("DISCORD_TOKEN not set.")
         raise SystemExit(1)
-    bot = ClickCartelBot()
-    bot.run(token)
+    ClickCartelBot().run(token)
 
 if __name__ == "__main__":
     main()
